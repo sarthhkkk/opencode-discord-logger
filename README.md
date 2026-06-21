@@ -1,8 +1,8 @@
 
 ```
                     ╔══════════════════════════════════════════════╗
-                    ║         OpenCode Discord Logger             ║
-                    ║     Automatically log AI chats to Discord   ║
+                    ║         OpenCode Discord Logger              ║
+                    ║     Automatically log AI chats to Discord    ║
                     ╚══════════════════════════════════════════════╝
                               │                                   
                     ┌─────────┴─────────┐                        
