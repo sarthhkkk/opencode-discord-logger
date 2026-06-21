@@ -90,6 +90,16 @@ function Write-Log {
 }
 
 # --- DISCORD API ---
+$ColorUser = 5793266       # Blue   0x5865F2
+$ColorAssistant = 5763719  # Green  0x57F287
+$ColorTool = 16704596      # Gold   0xFEE75C
+$ColorSession = 10181046   # Purple 0x9B59B6
+$ColorHeartbeat = 49151    # Teal   0x00BFFF
+$ColorError = 15548997     # Red    0xED4245
+
+$IconUser = "https://cdn.discordapp.com/embed/avatars/0.png"
+$IconAssistant = "https://cdn.discordapp.com/embed/avatars/1.png"
+
 function Send-Discord {
     param([string]$Content, [string]$Username = "OpenCode Chat")
     if (-not $Content -or $Content.Trim().Length -eq 0) { return $false }
@@ -103,6 +113,81 @@ function Send-Discord {
     } catch {
         Write-Log "Discord send failed: $($_.Exception.Message.Substring(0,[Math]::Min(100,"$($_.Exception.Message)".Length)))"
         return $false
+    }
+}
+
+function Send-Embed {
+    param($Embed, [string]$Username = "OpenCode Chat")
+    if (-not $Embed) { return $false }
+    $body = @{ embeds = @($Embed); username = $Username } | ConvertTo-Json -Depth 5
+    try {
+        $jsonBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+        Invoke-RestMethod -Uri $Config.webhookUrl -Method Post -Body $jsonBytes -ContentType "application/json" -ErrorAction Stop | Out-Null
+        Start-Sleep -Milliseconds 350
+        return $true
+    } catch {
+        Write-Log "Embed send failed: $($_.Exception.Message.Substring(0,[Math]::Min(100,"$($_.Exception.Message)".Length)))"
+        return $false
+    }
+}
+
+function New-MessageEmbed {
+    param([string]$Role, [string]$Content, [long]$Epoch, [string]$PartType = "text")
+    if (-not $Content -or $Content.Trim().Length -eq 0) { return $null }
+    $dt = (Get-Date '1970-01-01Z').AddMilliseconds($Epoch)
+    $ts = $dt.ToString("HH:mm:ss")
+    $iso = $dt.ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+    $isUser = ($Role -eq "user")
+    $color = if ($PartType -eq "tool" -or $PartType -eq "tool-result") { $ColorTool } elseif ($isUser) { $ColorUser } else { $ColorAssistant }
+    $emoji = if ($isUser) { ":bust_in_silhouette:" } else { ":robot:" }
+    $icon = if ($isUser) { $IconUser } else { $IconAssistant }
+    $desc = if ($PartType -eq "tool" -or $PartType -eq "tool-result") { "> $($Content.Trim())" } else { $Content.Trim() }
+
+    $embed = @{
+        author = @{ name = "$emoji  $Role"; icon_url = $icon }
+        description = $desc
+        color = $color
+        footer = @{ text = $ts }
+        timestamp = $iso
+    }
+    if ($desc.Length -gt 4000) { $embed.description = $desc.Substring(0, 3997) + "..." }
+    return $embed
+}
+
+function New-SessionEmbed {
+    param([string]$Title, [string]$Description, [string]$Footer = "", [int]$Color = $ColorSession)
+    $embed = @{ color = $Color }
+    if ($Title) { $embed.title = $Title }
+    if ($Description) { $embed.description = $Description }
+    if ($Footer) { $embed.footer = @{ text = $Footer } }
+    return $embed
+}
+
+function Send-EmbedChunked {
+    param([string]$Title, [string]$Body, [string]$Footer = "", [int]$Color = $ColorSession)
+    $maxDesc = 4000
+    $totalLen = $Body.Length
+    $partNum = 0
+    $totalParts = [Math]::Ceiling($totalLen / $maxDesc)
+
+    while ($Body.Length -gt 0) {
+        $partNum++
+        $chunk = if ($Body.Length -gt $maxDesc) {
+            $splitAt = $Body.LastIndexOf("`n", $maxDesc)
+            if ($splitAt -le 0) { $splitAt = $maxDesc }
+            $c = $Body.Substring(0, $splitAt)
+            $Body = $Body.Substring($splitAt).TrimStart()
+            $c
+        } else {
+            $c = $Body
+            $Body = ""
+            $c
+        }
+        $pTitle = if ($totalParts -gt 1) { "$Title (Part $partNum/$totalParts)" } else { $Title }
+        $pFooter = if ($totalParts -gt 1) { "Page $partNum/$totalParts | $Footer" } else { $Footer }
+        $embed = New-SessionEmbed -Title $pTitle -Description $chunk -Footer $pFooter -Color $Color
+        Send-Embed -Embed $embed
     }
 }
 
@@ -166,33 +251,12 @@ function Format-Messages {
             $lines.Add("**$emoji $($r.role)** _at $ts_")
         }
         if ($r.partType -eq "tool" -or $r.partType -eq "tool-result") {
-            $lines.Add("> $($r.text.Trim())")
+            $lines.Add(">>> $($r.text.Trim())")
         } else {
             $lines.Add($r.text.Trim())
         }
     }
     return $lines -join "`n"
-}
-
-function Send-Chunked {
-    param([string]$Content)
-    $maxChars = 1900
-    if (-not $Content -or $Content.Trim().Length -eq 0) { return }
-    $chunks = @()
-    while ($Content.Length -gt 0) {
-        if ($Content.Length -le $maxChars) {
-            $chunks += $Content; $Content = ""
-        } else {
-            $splitAt = $Content.LastIndexOf("`n", $maxChars)
-            if ($splitAt -le 0) { $splitAt = $maxChars }
-            $chunks += $Content.Substring(0, $splitAt)
-            $Content = $Content.Substring($splitAt).TrimStart()
-        }
-    }
-    for ($i = 0; $i -lt $chunks.Count; $i++) {
-        $prefix = if ($chunks.Count -gt 1) { "[$($i+1)/$($chunks.Count)] " } else { "" }
-        Send-Discord -Content "$prefix$($chunks[$i])"
-    }
 }
 
 # --- EXPORT ---
@@ -204,8 +268,8 @@ function Export-Session {
     $created = if ($epoch) { (Get-Date '1970-01-01Z').AddMilliseconds([long]$epoch).ToString("yyyy-MM-dd HH:mm") } else { "unknown" }
     $msgs = Get-Messages -Sid $Sid -Reasoning ($Reasoning -or $Config.includeReasoning)
     $body = Format-Messages -Messages $msgs
-    $header = "**Session:** $title`n**Date:** $created`n---"
-    Send-Chunked -Content "$header`n$body"
+    $header = "**Date:** $created  **Messages:** $($msgs.Count)"
+    Send-EmbedChunked -Title "Session: $title" -Body "$header`n$body" -Footer $created -Color $ColorSession
     Write-Log "Session $Sid exported"
 }
 
@@ -215,7 +279,7 @@ function Watch-Live {
     Write-Log "DB: $($Config.dbPath)"
     [System.IO.File]::WriteAllText($PidFile, [System.Diagnostics.Process]::GetCurrentProcess().Id.ToString())
 
-    Send-Discord -Content "**OpenCode logger active** -- watching for new sessions..."
+    Send-Embed -Embed (New-SessionEmbed -Title "OpenCode Logger Active" -Description "Watching for new sessions..." -Color $ColorHeartbeat)
 
     $state = Get-State
     $lastTime = [long]$state.lastTime
@@ -267,16 +331,13 @@ function Watch-Live {
                         $dt = (Get-Date '1970-01-01Z').AddMilliseconds($firstMsg.epoch)
                         $ts = $dt.ToString("HH:mm:ss")
                         $shortTitle = if ($title.Length -gt 80) { $title.Substring(0, 77) + "..." } else { $title }
-                        Send-Discord -Content ":new: **New session: $shortTitle** [$ts]"
+                        Send-Embed -Embed (New-SessionEmbed -Title ":new: New Session" -Description "**$shortTitle**" -Footer $ts -Color $ColorSession)
                         $knownSessions[$sid] = $firstMsg.epoch
                     }
 
                     foreach ($m in $msgs) {
-                        $dt = (Get-Date '1970-01-01Z').AddMilliseconds($m.epoch)
-                        $ts = $dt.ToString("HH:mm:ss")
-                        $emoji = if ($m.role -eq "user") { ":bust_in_silhouette:" } else { ":robot:" }
-                        $preview = if ($m.text.Length -gt 1900) { $m.text.Substring(0, 1897) + "..." } else { $m.text }
-                        Send-Discord -Content "**$emoji $($m.role)** [$ts]`n$preview"
+                        $embed = New-MessageEmbed -Role $m.role -Content $m.text -Epoch $m.epoch -PartType $m.partType
+                        if ($embed) { Send-Embed -Embed $embed }
                     }
                 }
             }
@@ -286,7 +347,7 @@ function Watch-Live {
                 $heartbeatCounter = 0
                 $cutoff = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - 300000
                 $activeCount = sqlite3 $Config.dbPath "SELECT COUNT(DISTINCT session_id) FROM message WHERE time_created > $cutoff" 2>$null
-                if ($activeCount) { Send-Discord -Content ":heartbeat: Logger active -- $activeCount active sessions" }
+                if ($activeCount) { Send-Embed -Embed (New-SessionEmbed -Title ":heartbeat: Logger Active" -Description "$activeCount active sessions in last 5 min" -Color $ColorHeartbeat) }
             }
 
             $saveCounter++
@@ -316,7 +377,7 @@ function Onboard-Logger {
     if ($sid) {
         $title = sqlite3 $Config.dbPath "SELECT title FROM session WHERE id='$sid'"
         $created = sqlite3 $Config.dbPath "SELECT datetime(time_created/1000,'unixepoch','localtime') FROM session WHERE id='$sid'"
-        Send-Discord -Content ":arrow_forward: **OpenCode session ended**`n**Session:** $title`n**Time:** $created"
+        Send-Embed -Embed (New-SessionEmbed -Title ":arrow_forward: Session Ended" -Description "**$title**" -Footer $created -Color $ColorSession)
     }
 }
 
