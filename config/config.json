@@ -1,0 +1,11 @@
+{
+  "_comment": "OpenCode Discord Logger Configuration",
+  "webhookUrl": "YOUR_DISCORD_WEBHOOK_URL_HERE",
+  "dbPath": "",
+  "logDir": "",
+  "intervalSeconds": 60,
+  "heartbeatMins": 15,
+  "maxMessagesPerBatch": 10,
+  "includeToolResults": true,
+  "includeReasoning": false
+}

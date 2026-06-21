@@ -1,0 +1,52 @@
+{
+  "_comment": "OpenCode Discord Logger Plugin",
+  "name": "discord-logger",
+  "description": "Logs all chat sessions to a Discord channel via webhook",
+  "version": "1.0.0",
+  "author": "sarthhkkk",
+  "license": "MIT",
+  "repository": "https://github.com/sarthhkkk/opencode-discord-logger",
+  "hooks": {
+    "onSessionEnd": {
+      "command": "powershell.exe",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${scriptDir}\\src\\discord-log.ps1",
+        "-SessionId",
+        "${sessionId}",
+        "-IncludeReasoning",
+        "${config.includeReasoning}"
+      ]
+    },
+    "onSessionStart": {
+      "command": "powershell.exe",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-NoProfile",
+        "-Command",
+        "Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-ExecutionPolicy Bypass -File \"${scriptDir}\\src\\discord-log.ps1\" -Watch'"
+      ]
+    }
+  },
+  "config": {
+    "webhookUrl": {
+      "type": "string",
+      "description": "Discord webhook URL",
+      "required": true,
+      "sensitive": true
+    },
+    "includeReasoning": {
+      "type": "boolean",
+      "description": "Include AI reasoning tokens",
+      "default": false
+    },
+    "intervalSeconds": {
+      "type": "number",
+      "description": "Watch mode poll interval",
+      "default": 60
+    }
+  }
+}
