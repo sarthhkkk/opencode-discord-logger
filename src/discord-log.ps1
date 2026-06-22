@@ -90,6 +90,29 @@ function Write-Log {
 }
 
 # --- DISCORD API ---
+function Get-SafeText {
+    param([string]$Text)
+    if (-not $Text) { return "" }
+    $Text = $Text -replace [char]0x2013, '-'   # en dash
+    $Text = $Text -replace [char]0x2014, '--'  # em dash
+    $Text = $Text -replace [char]0x2018, "'"   # left single quote
+    $Text = $Text -replace [char]0x2019, "'"   # right single quote
+    $Text = $Text -replace [char]0x201C, '"'   # left double quote
+    $Text = $Text -replace [char]0x201D, '"'   # right double quote
+    $Text = $Text -replace [char]0x2026, '...' # ellipsis
+    $Text = $Text -replace [char]0x2022, '*'   # bullet
+    $Text = $Text -replace [char]0x2023, '>'   # triangular bullet
+    $Text = $Text -replace [char]0x00A0, ' '   # non-breaking space
+    $Text = $Text -replace [char]0x00AB, '"'   # left-pointing double angle
+    $Text = $Text -replace [char]0x00BB, '"'   # right-pointing double angle
+    $Text = $Text -replace [char]0x00B7, '*'   # middle dot
+    $Text = $Text -replace [char]0x00A9, '(c)' # copyright
+    $Text = $Text -replace [char]0x00AE, '(r)' # registered
+    $Text = $Text -replace [char]0x2122, '(tm)'# trademark
+    $Text = $Text -replace "[" + [char]0x0080 + "-" + [char]0x024F + "]", '?'
+    return $Text
+}
+
 $ColorUser = 5793266       # Blue   0x5865F2
 $ColorAssistant = 5763719  # Green  0x57F287
 $ColorTool = 16704596      # Gold   0xFEE75C
@@ -102,6 +125,7 @@ $IconAssistant = "https://cdn.discordapp.com/embed/avatars/1.png"
 
 function Send-Discord {
     param([string]$Content, [string]$Username = "OpenCode Chat")
+    $Content = Get-SafeText -Text $Content
     if (-not $Content -or $Content.Trim().Length -eq 0) { return $false }
     $safe = $Content -replace '[\x00-\x08\x0B\x0C\x0E-\x1F]', ''
     $body = @{ content = $safe; username = $Username } | ConvertTo-Json -Depth 3
@@ -133,6 +157,7 @@ function Send-Embed {
 
 function New-MessageEmbed {
     param([string]$Role, [string]$Content, [long]$Epoch, [string]$PartType = "text")
+    $Content = Get-SafeText -Text $Content
     if (-not $Content -or $Content.Trim().Length -eq 0) { return $null }
     $dt = (Get-Date '1970-01-01Z').AddMilliseconds($Epoch)
     $ts = $dt.ToString("HH:mm:ss")
@@ -157,6 +182,9 @@ function New-MessageEmbed {
 
 function New-SessionEmbed {
     param([string]$Title, [string]$Description, [string]$Footer = "", [int]$Color = $ColorSession)
+    $Title = Get-SafeText -Text $Title
+    $Description = Get-SafeText -Text $Description
+    $Footer = Get-SafeText -Text $Footer
     $embed = @{ color = $Color }
     if ($Title) { $embed.title = $Title }
     if ($Description) { $embed.description = $Description }
@@ -263,7 +291,7 @@ function Format-Messages {
 function Export-Session {
     param([string]$Sid, [bool]$Reasoning = $false)
     Write-Log "Exporting session $Sid..."
-    $title = sqlite3 $Config.dbPath "SELECT title FROM session WHERE id='$Sid'"
+    $title = Get-SafeText (sqlite3 $Config.dbPath "SELECT title FROM session WHERE id='$Sid'")
     $epoch = sqlite3 $Config.dbPath "SELECT time_created FROM session WHERE id='$Sid'"
     $created = if ($epoch) { (Get-Date '1970-01-01Z').AddMilliseconds([long]$epoch).ToString("yyyy-MM-dd HH:mm") } else { "unknown" }
     $msgs = Get-Messages -Sid $Sid -Reasoning ($Reasoning -or $Config.includeReasoning)
@@ -327,7 +355,7 @@ function Watch-Live {
                     $firstMsg = $msgs[0]
 
                     if (-not $knownSessions.ContainsKey($sid)) {
-                        $title = sqlite3 $Config.dbPath "SELECT title FROM session WHERE id='$sid'"
+                        $title = Get-SafeText (sqlite3 $Config.dbPath "SELECT title FROM session WHERE id='$sid'")
                         $dt = (Get-Date '1970-01-01Z').AddMilliseconds($firstMsg.epoch)
                         $ts = $dt.ToString("HH:mm:ss")
                         $shortTitle = if ($title.Length -gt 80) { $title.Substring(0, 77) + "..." } else { $title }
@@ -375,7 +403,7 @@ function Onboard-Logger {
         $sid = sqlite3 $Config.dbPath "SELECT id FROM session ORDER BY time_created DESC LIMIT 1"
     }
     if ($sid) {
-        $title = sqlite3 $Config.dbPath "SELECT title FROM session WHERE id='$sid'"
+        $title = Get-SafeText (sqlite3 $Config.dbPath "SELECT title FROM session WHERE id='$sid'")
         $created = sqlite3 $Config.dbPath "SELECT datetime(time_created/1000,'unixepoch','localtime') FROM session WHERE id='$sid'"
         Send-Embed -Embed (New-SessionEmbed -Title ":arrow_forward: Session Ended" -Description "**$title**" -Footer $created -Color $ColorSession)
     }
